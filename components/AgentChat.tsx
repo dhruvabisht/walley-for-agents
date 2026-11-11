@@ -68,6 +68,67 @@ function Receipt({ step }: { step: AgentStep }) {
   );
 }
 
+type Declined = {
+  reason: string;
+  merchant: string;
+  total_cents: number;
+  available_cents: number;
+  shortfall_cents: number;
+  affordable_items: { product_id: string; title: string; price_cents: number }[];
+  suggested_topup_dollars: number;
+};
+
+// Shown when the wallet refuses a payment: why, and one-tap ways forward.
+function DeclinedCard({ d, onBuy, disabled }: { d: Declined; onBuy: (text: string) => void; disabled: boolean }) {
+  const [opening, setOpening] = useState(false);
+  async function topUp() {
+    setOpening(true);
+    const res = await fetch("/api/wallet/topup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ amount: d.suggested_topup_dollars }),
+    });
+    const json = await res.json();
+    if (res.ok) window.location.href = json.url;
+    else setOpening(false);
+  }
+  return (
+    <div className="rise overflow-hidden rounded-2xl bg-panel ring-1 ring-rose/40">
+      <div className="flex items-center gap-2 bg-rose/12 px-4 py-2.5">
+        <span aria-hidden>🛑</span>
+        <span className="font-semibold text-rose">The wallet refused this payment</span>
+      </div>
+      <div className="space-y-3 px-4 py-3 text-sm">
+        <p>
+          {d.reason === "over_order_limit"
+            ? `${usd(d.total_cents)} at ${d.merchant} is over your per-order limit.`
+            : `${usd(d.total_cents)} at ${d.merchant}, but only ${usd(d.available_cents)} is left. You're ${usd(d.shortfall_cents)} short.`}
+        </p>
+        <div className="grid gap-2">
+          {d.affordable_items.map((i) => (
+            <button
+              key={i.product_id}
+              disabled={disabled}
+              onClick={() => onBuy(`Buy just the ${i.title}`)}
+              className="flex items-center justify-between gap-3 rounded-xl bg-leaf/12 px-3.5 py-2.5 text-left font-medium text-leaf transition-colors hover:bg-leaf/20 disabled:opacity-50"
+            >
+              <span>Buy just the {i.title}</span>
+              <span className="tabular">{usd(i.price_cents)}</span>
+            </button>
+          ))}
+          <button
+            onClick={topUp}
+            disabled={opening}
+            className="rounded-xl bg-violet px-3.5 py-2.5 font-semibold text-white transition-transform active:scale-[0.98] disabled:opacity-50"
+          >
+            {opening ? "Opening Stripe Checkout…" : `Add $${d.suggested_topup_dollars} to the wallet`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AgentChat({ onActivity, className = "" }: { onActivity: () => void; className?: string }) {
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -165,6 +226,12 @@ export default function AgentChat({ onActivity, className = "" }: { onActivity: 
               {t.steps
                 ?.filter((s) => s.tool === "complete_checkout" && s.ok && s.data?.status === "completed")
                 .map((s, j) => <Receipt key={j} step={s} />)}
+              {t.steps
+                ?.filter((s) => s.tool === "complete_checkout" && !s.ok && s.data?.declined)
+                .slice(-1)
+                .map((s, j) => (
+                  <DeclinedCard key={j} d={s.data as unknown as Declined} onBuy={send} disabled={busy} />
+                ))}
               <div
                 className={`max-w-[92%] rounded-3xl rounded-bl-lg px-4 py-3 text-sm leading-relaxed ${
                   t.error ? "bg-rose/10 text-rose" : "bg-paper"

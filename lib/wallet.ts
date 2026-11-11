@@ -3,7 +3,7 @@
 import { q } from "./db";
 import { config } from "./config";
 import { stripe, stripePreview, StripeApiError } from "./stripe";
-import { attachSpt, placeHold, recordDeclined, releaseHold, settlePurchase, type HoldInput } from "./ledger";
+import { attachSpt, availableBalance, placeHold, recordDeclined, releaseHold, settlePurchase, type HoldInput } from "./ledger";
 
 // The wallet's funding card. In the sandbox this is a Stripe test card; in production it would be
 // a Stripe Issuing virtual card funded by the user's top-ups.
@@ -17,6 +17,24 @@ async function fundingPaymentMethod(): Promise<string> {
   await q(`insert into wallet_config (key, value) values ('funding_pm', $1) on conflict (key) do nothing`, [pm.id]);
   const [saved] = await q<{ value: string }>(`select value from wallet_config where key = 'funding_pm'`);
   return saved.value;
+}
+
+// Thrown when the wallet refuses to pay. Carries what the agent needs to offer the user options.
+export class WalletDeclined extends Error {
+  constructor(
+    message: string,
+    public details: {
+      reason: "insufficient_balance" | "over_order_limit";
+      merchant: string;
+      total_cents: number;
+      available_cents: number;
+      shortfall_cents: number;
+      affordable_items: { product_id: string; title: string; price_cents: number }[];
+      suggested_topup_dollars: number;
+    },
+  ) {
+    super(message);
+  }
 }
 
 export type SptResult = { id: string; mode: "issued" | "sandbox_granted"; expiresAt: number };
@@ -55,7 +73,7 @@ type UcpCheckout = {
   status: string;
   currency: string;
   merchant: { id: string; name: string; url: string };
-  line_items: { item: { title: string; price: number }; quantity: number }[];
+  line_items: { item: { id: string; title: string; price: number }; quantity: number }[];
   totals: { type: string; amount: number }[];
   order: { id: string; payment_intent_id: string } | null;
 };
@@ -84,17 +102,28 @@ export async function payForCheckout(opts: {
     agentRequest: opts.agentRequest,
     ucpCheckoutId: checkout.id,
   };
+  const decline = async (reason: "insufficient_balance" | "over_order_limit", text: string) => {
+    await recordDeclined(hold, text);
+    const available = await availableBalance();
+    const limit = Math.min(available, config.maxOrderAmount());
+    const shortfall = Math.max(0, total - available);
+    return new WalletDeclined(text, {
+      reason,
+      merchant: checkout.merchant.name,
+      total_cents: total,
+      available_cents: available,
+      shortfall_cents: shortfall,
+      affordable_items: checkout.line_items
+        .filter((li) => li.item.price <= limit)
+        .map((li) => ({ product_id: li.item.id, title: li.item.title, price_cents: li.item.price })),
+      suggested_topup_dollars: Math.min(500, Math.max(5, Math.ceil(shortfall / 100))),
+    });
+  };
   if (total > config.maxOrderAmount()) {
-    const reason = `Over the per-order limit of $${(config.maxOrderAmount() / 100).toFixed(2)}`;
-    await recordDeclined(hold, reason);
-    throw new Error(`${reason}. Order total is $${(total / 100).toFixed(2)}.`);
+    throw await decline("over_order_limit", `Over the per-order limit of $${(config.maxOrderAmount() / 100).toFixed(2)}`);
   }
   const entryId = await placeHold(hold);
-  if (!entryId) {
-    const reason = "Insufficient wallet balance";
-    await recordDeclined(hold, reason);
-    throw new Error(`${reason}. Ask the user to top up.`);
-  }
+  if (!entryId) throw await decline("insufficient_balance", "Insufficient wallet balance");
 
   try {
     const spt = await issueSpt(total, checkout.currency);

@@ -2,7 +2,7 @@
 import { config } from "./config";
 import { MERCHANTS, searchProducts } from "./merchants";
 import { availableBalance } from "./ledger";
-import { payForCheckout } from "./wallet";
+import { payForCheckout, WalletDeclined } from "./wallet";
 
 export type ChatMessage =
   | { role: "system" | "user"; content: string }
@@ -24,7 +24,7 @@ Rules:
 - Only buy what the user explicitly asked for. Never add extra items.
 - Flow: search_products -> create_checkout -> tell the user the merchant, items and exact total -> wait for the user to confirm -> complete_checkout.
 - If the user's message already says to go ahead and buy a specific item (e.g. "buy the merino beanie"), you may create the checkout and complete it in the same turn.
-- Check get_wallet_balance before completing when the total is large. If the balance is too low, tell the user to top up.
+- If complete_checkout is refused, explain why in one sentence (the wallet refused: the total, the balance, and how much is missing, or the per-order limit). Then offer exactly two choices: buy only the items from that order that fit the balance (name them with prices, from affordable_items), or add money to the wallet (at least the shortfall, using "Add money"). Wait for the user's choice; do not retry on your own. If affordable_items is empty, only offer adding money.
 - Prices are in US dollars. Tool results give amounts in cents; show dollars to the user.
 - After a purchase, report: merchant, items, total, order id, and the Shared Payment Token id used.
 - Be brief.`;
@@ -174,8 +174,9 @@ export async function runAgent(history: ChatMessage[], origin: string) {
         messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
       } catch (e) {
         const err = e instanceof Error ? e.message : String(e);
-        steps.push({ tool: call.function.name, args, ok: false, summary: err });
-        messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify({ error: err }) });
+        const details = e instanceof WalletDeclined ? { declined: true, ...e.details } : undefined;
+        steps.push({ tool: call.function.name, args, ok: false, summary: err, data: details });
+        messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify({ error: err, ...details }) });
       }
     }
   }
