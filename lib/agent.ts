@@ -11,7 +11,13 @@ export type ChatMessage =
 
 type ToolCall = { id: string; type: "function"; function: { name: string; arguments: string } };
 
-export type AgentStep = { tool: string; args: Record<string, unknown>; ok: boolean; summary: string };
+export type AgentStep = {
+  tool: string;
+  args: Record<string, unknown>;
+  ok: boolean;
+  summary: string;
+  data?: Record<string, unknown>;
+};
 
 const SYSTEM = `You are Walley, a shopping agent that buys things for the user with their prepaid Walley wallet.
 Rules:
@@ -163,7 +169,8 @@ export async function runAgent(history: ChatMessage[], origin: string) {
       } catch {}
       try {
         const { result, summary } = await runTool(call.function.name, args, origin, agentRequest);
-        steps.push({ tool: call.function.name, args, ok: true, summary });
+        const keep = call.function.name === "complete_checkout" || call.function.name === "create_checkout";
+        steps.push({ tool: call.function.name, args, ok: true, summary, data: keep ? (result as Record<string, unknown>) : undefined });
         messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
       } catch (e) {
         const err = e instanceof Error ? e.message : String(e);

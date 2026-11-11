@@ -1,57 +1,107 @@
 @import "tailwindcss";
 
+/* Walley palette: one colour per merchant so you can see where money went at a glance. */
 :root {
-  --bg: #f6f5f1;
+  --paper: #f3f4fb;
   --panel: #ffffff;
-  --ink: #16181d;
-  --muted: #6b6f78;
-  --line: #e4e2dc;
-  --accent: #4f46e5;
-  --accent-soft: #eef0ff;
-  --credit: #0f8a5f;
-  --debit: #16181d;
-  --warn: #b45309;
-  --danger: #b42318;
+  --ink: #1c1838;
+  --muted: #6a6787;
+  --line: #e3e3f0;
+  --violet: #6c47ff; /* brand, money added */
+  --glacier: #1e9bff; /* Alpine Supply Co. */
+  --amber: #ff9f1c; /* Night Owl Coffee Roasters */
+  --leaf: #1fae6b; /* Paperleaf Books */
+  --rose: #ff4d79; /* holds, failures */
+  --card-from: #1c1838;
+  --card-to: #2d2366;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0e0f12;
-    --panel: #16181d;
-    --ink: #eceef2;
-    --muted: #9399a4;
-    --line: #262a31;
-    --accent: #8b85ff;
-    --accent-soft: #1d1c33;
-    --credit: #34d399;
-    --debit: #eceef2;
-    --warn: #f59e0b;
-    --danger: #f87171;
+    --paper: #110f24;
+    --panel: #1b1835;
+    --ink: #efeefa;
+    --muted: #a19fc0;
+    --line: #2c2850;
+    --violet: #8f73ff;
+    --glacier: #4db3ff;
+    --amber: #ffb24d;
+    --leaf: #3fd18f;
+    --rose: #ff6b91;
+    --card-from: #2a2160;
+    --card-to: #3b2c8a;
   }
 }
 
 @theme inline {
-  --color-bg: var(--bg);
+  --color-paper: var(--paper);
   --color-panel: var(--panel);
   --color-ink: var(--ink);
   --color-muted: var(--muted);
   --color-line: var(--line);
-  --color-accent: var(--accent);
-  --color-accent-soft: var(--accent-soft);
-  --color-credit: var(--credit);
-  --color-debit: var(--debit);
-  --color-warn: var(--warn);
-  --color-danger: var(--danger);
-  --font-sans: var(--font-geist-sans);
+  --color-violet: var(--violet);
+  --color-glacier: var(--glacier);
+  --color-amber: var(--amber);
+  --color-leaf: var(--leaf);
+  --color-rose: var(--rose);
+  --font-sans: var(--font-figtree);
+  --font-display: var(--font-bricolage);
   --font-mono: var(--font-geist-mono);
 }
 
 body {
-  background: var(--bg);
+  background: var(--paper);
   color: var(--ink);
-  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  font-family: var(--font-figtree), system-ui, sans-serif;
 }
 
 .tabular {
   font-variant-numeric: tabular-nums;
+}
+
+:focus-visible {
+  outline: 2px solid var(--violet);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+/* A new ledger row glows once so you notice what the agent just did. */
+@keyframes fresh {
+  0% { background: color-mix(in oklab, var(--violet) 18%, transparent); }
+  100% { background: transparent; }
+}
+.fresh {
+  animation: fresh 2.4s ease-out;
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.rise {
+  animation: rise 0.35s ease-out both;
+}
+
+.ribbon-seg {
+  transition: flex-grow 0.9s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.hold-stripes {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    var(--rose) 0 6px,
+    color-mix(in oklab, var(--rose) 55%, white) 6px 12px
+  );
+}
+
+.wallet-card {
+  background:
+    radial-gradient(120% 140% at 100% 0%, color-mix(in oklab, var(--violet) 55%, transparent) 0%, transparent 55%),
+    radial-gradient(90% 120% at 0% 100%, color-mix(in oklab, var(--glacier) 35%, transparent) 0%, transparent 60%),
+    linear-gradient(135deg, var(--card-from), var(--card-to));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fresh, .rise { animation: none; }
+  .ribbon-seg { transition: none; }
 }

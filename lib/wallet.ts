@@ -3,7 +3,7 @@
 import { q } from "./db";
 import { config } from "./config";
 import { stripe, stripePreview, StripeApiError } from "./stripe";
-import { attachSpt, placeHold, releaseHold, settlePurchase, type HoldInput } from "./ledger";
+import { attachSpt, placeHold, recordDeclined, releaseHold, settlePurchase, type HoldInput } from "./ledger";
 
 // The wallet's funding card. In the sandbox this is a Stripe test card; in production it would be
 // a Stripe Issuing virtual card funded by the user's top-ups.
@@ -73,8 +73,6 @@ export async function payForCheckout(opts: {
   const total = checkout.totals.find((t) => t.type === "total")?.amount ?? 0;
 
   if (total <= 0) throw new Error("Checkout total is zero");
-  if (total > config.maxOrderAmount())
-    throw new Error(`Order total $${(total / 100).toFixed(2)} is over the per-order limit of $${(config.maxOrderAmount() / 100).toFixed(2)}`);
 
   const hold: HoldInput = {
     amount: total,
@@ -86,8 +84,17 @@ export async function payForCheckout(opts: {
     agentRequest: opts.agentRequest,
     ucpCheckoutId: checkout.id,
   };
+  if (total > config.maxOrderAmount()) {
+    const reason = `Over the per-order limit of $${(config.maxOrderAmount() / 100).toFixed(2)}`;
+    await recordDeclined(hold, reason);
+    throw new Error(`${reason}. Order total is $${(total / 100).toFixed(2)}.`);
+  }
   const entryId = await placeHold(hold);
-  if (!entryId) throw new Error("Insufficient wallet balance. Ask the user to top up.");
+  if (!entryId) {
+    const reason = "Insufficient wallet balance";
+    await recordDeclined(hold, reason);
+    throw new Error(`${reason}. Ask the user to top up.`);
+  }
 
   try {
     const spt = await issueSpt(total, checkout.currency);

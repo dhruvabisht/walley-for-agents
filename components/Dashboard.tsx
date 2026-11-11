@@ -1,186 +1,207 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { LedgerEntry } from "@/lib/ledger";
-import LedgerTable from "./LedgerTable";
+import WalletCard, { type MerchantSpend as MerchantRow, type Summary } from "./WalletCard";
+import TopUp from "./TopUp";
+import MerchantSpend from "./MerchantSpend";
+import Activity from "./Activity";
 import AgentChat from "./AgentChat";
-import { usd } from "./format";
 
-type WalletData = {
-  summary: { toppedUp: number; spent: number; held: number; available: number; purchases: number };
-  entries: LedgerEntry[];
-  byMerchant: { merchant: string; total: number; orders: number }[];
-};
+type WalletData = { summary: Summary; entries: LedgerEntry[]; byMerchant: MerchantRow[] };
+type Tab = "wallet" | "activity" | "agent";
 
-const PRESETS = [25, 50, 100];
-
-function Stat({ label, value, hint, big }: { label: string; value: string; hint?: string; big?: boolean }) {
-  return (
-    <div className={`rounded-2xl border border-line bg-panel px-5 py-4 ${big ? "sm:col-span-2" : ""}`}>
-      <div className="text-sm text-muted">{label}</div>
-      <div className={`tabular font-semibold tracking-tight ${big ? "text-4xl mt-1" : "text-2xl mt-0.5"}`}>{value}</div>
-      {hint && <div className="text-xs text-muted mt-1">{hint}</div>}
-    </div>
-  );
-}
+const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
+  {
+    id: "wallet",
+    label: "Wallet",
+    icon: (
+      <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+        <rect x="3" y="6" width="18" height="14" rx="3" />
+        <path d="M16 13h2M3 10h18M7 6V5a2 2 0 0 1 2-2h8" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
+    id: "activity",
+    label: "Activity",
+    icon: (
+      <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+        <path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3Z" strokeLinejoin="round" />
+        <path d="M9 8h6M9 12h6" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
+    id: "agent",
+    label: "Agent",
+    icon: (
+      <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+        <path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8L12 3Z" strokeLinejoin="round" />
+        <path d="M18 15l.8 2.2L21 18l-2.2.8L18 21l-.8-2.2L15 18l2.2-.8L18 15Z" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+];
 
 export default function Dashboard() {
   const [data, setData] = useState<WalletData | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [amount, setAmount] = useState(50);
-  const [toppingUp, setToppingUp] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ text: string; tone: "good" | "bad" } | null>(null);
+  const [tab, setTab] = useState<Tab>("wallet");
+  const [freshIds, setFreshIds] = useState<Set<string>>(new Set());
+  const [unseen, setUnseen] = useState(0);
+  const seen = useRef<Set<string> | null>(null);
+  const tabRef = useRef<Tab>("wallet");
 
   const load = useCallback(async () => {
     try {
       const res = await fetch("/api/wallet", { cache: "no-store" });
       const json = await res.json();
       if (!res.ok) throw new Error(json.message);
-      setData(json);
-      setError(null);
+      const next = json as WalletData;
+      // Highlight rows (and badge the Activity tab) when something new or changed arrives.
+      const keys = new Set(next.entries.map((e) => `${e.id}:${e.status}`));
+      if (seen.current) {
+        const fresh = next.entries.filter((e) => !seen.current!.has(`${e.id}:${e.status}`)).map((e) => e.id);
+        if (fresh.length) {
+          setFreshIds(new Set(fresh));
+          if (tabRef.current !== "activity") setUnseen((n) => n + fresh.length);
+        }
+      }
+      seen.current = keys;
+      setData(next);
+      setLoadError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setLoadError(e instanceof Error ? e.message : String(e));
     }
   }, []);
 
   useEffect(() => {
-    // Poll the ledger so agent purchases appear live.
     const first = setTimeout(() => {
       load();
       const p = new URLSearchParams(window.location.search).get("topup");
-      if (p === "success") setNotice("Top-up received. Your agent can spend it now.");
-      if (p === "cancelled") setNotice("Top-up cancelled.");
+      if (p === "success") setNotice({ text: "Money added. Your agent can spend it now.", tone: "good" });
+      if (p === "cancelled") setNotice({ text: "Top-up cancelled. No money was taken.", tone: "bad" });
+      if (p === "unpaid") setNotice({ text: "Stripe hasn't confirmed that payment yet.", tone: "bad" });
       if (p) window.history.replaceState({}, "", "/");
     }, 0);
-    const t = setInterval(load, 4000);
+    const poll = setInterval(load, 4000);
     return () => {
       clearTimeout(first);
-      clearInterval(t);
+      clearInterval(poll);
     };
   }, [load]);
 
-  async function topUp() {
-    setToppingUp(true);
-    try {
-      const res = await fetch("/api/wallet/topup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amount }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.message);
-      window.location.href = json.url;
-    } catch (e) {
-      setNotice(e instanceof Error ? e.message : String(e));
-      setToppingUp(false);
-    }
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => setNotice(null), 6000);
+    return () => clearTimeout(t);
+  }, [notice]);
+
+  function go(next: Tab) {
+    setTab(next);
+    tabRef.current = next;
+    if (next === "activity") setUnseen(0);
+    window.scrollTo({ top: 0 });
   }
 
-  const s = data?.summary;
-  const maxMerchant = Math.max(1, ...(data?.byMerchant.map((m) => m.total) || [1]));
+  const show = (t: Tab) => (tab === t ? "block" : "hidden") + " lg:block";
 
   return (
-    <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6">
-      <header className="flex flex-wrap items-end justify-between gap-3 mb-6">
-        <div>
-          <div className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded-lg bg-accent text-white grid place-items-center font-bold">W</div>
-            <h1 className="text-2xl font-semibold tracking-tight">Walley</h1>
+    <div className="mx-auto max-w-7xl px-4 pb-32 pt-5 sm:px-6 lg:pb-10 lg:pt-8">
+      <header className="mb-5 flex items-center justify-between gap-3 lg:mb-8">
+        <div className="flex items-center gap-3">
+          <span className="grid h-10 w-10 place-items-center rounded-2xl bg-violet font-display text-xl font-bold text-white shadow-[0_8px_20px_-8px_var(--violet)]">
+            W
+          </span>
+          <div>
+            <h1 className="font-display text-2xl font-semibold leading-none tracking-tight">Walley</h1>
+            <p className="mt-1 hidden text-sm text-muted sm:block">The wallet your AI agent shops with</p>
           </div>
-          <p className="text-muted text-sm mt-1">A prepaid wallet your AI agent can spend, and you can audit.</p>
         </div>
-        <div className="flex flex-wrap gap-2 text-xs">
-          <span className="px-2 py-1 rounded-full border border-line text-warn">Stripe sandbox</span>
-          <span className="px-2 py-1 rounded-full border border-line text-muted">UCP 2026-04-08</span>
-          <span className="px-2 py-1 rounded-full border border-line text-muted">Shared Payment Tokens</span>
-        </div>
+        <span className="rounded-full bg-amber/15 px-3 py-1.5 text-xs font-semibold text-amber">Test mode</span>
       </header>
 
       {notice && (
-        <div className="mb-4 rounded-xl border border-line bg-panel px-4 py-3 text-sm flex justify-between">
-          <span>{notice}</span>
-          <button onClick={() => setNotice(null)} className="text-muted">✕</button>
+        <div
+          role="status"
+          className={`rise mb-5 flex items-center justify-between gap-3 rounded-2xl px-4 py-3 text-sm font-medium ${
+            notice.tone === "good" ? "bg-leaf/15 text-leaf" : "bg-rose/12 text-rose"
+          }`}
+        >
+          <span>{notice.text}</span>
+          <button onClick={() => setNotice(null)} aria-label="Dismiss" className="text-lg leading-none">
+            ×
+          </button>
         </div>
       )}
-      {error && (
-        <div className="mb-4 rounded-xl border border-danger/40 bg-danger/5 px-4 py-3 text-sm text-danger">{error}</div>
+      {loadError && (
+        <div className="mb-5 rounded-2xl bg-rose/12 px-4 py-3 text-sm text-rose">
+          Couldn&apos;t load the wallet: {loadError}
+        </div>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
-        <main className="space-y-6 min-w-0">
-          <div className="grid gap-4 sm:grid-cols-4">
-            <Stat big label="Available to the agent" value={s ? usd(s.available) : "—"} hint="Top-ups minus purchases and holds" />
-            <Stat label="Spent by agent" value={s ? usd(s.spent) : "—"} hint={s ? `${s.purchases} purchases` : undefined} />
-            <Stat label="On hold" value={s ? usd(s.held) : "—"} hint="Orders in flight" />
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_400px]">
+        <div className="min-w-0 space-y-6">
+          <div className={`space-y-6 ${show("wallet")}`}>
+            <WalletCard summary={data?.summary ?? null} byMerchant={data?.byMerchant ?? []} />
+            <div className="grid gap-6 md:grid-cols-2">
+              <TopUp onError={(text) => setNotice({ text, tone: "bad" })} />
+              <MerchantSpend rows={data?.byMerchant ?? []} />
+            </div>
+            <button
+              onClick={() => go("agent")}
+              className="flex w-full items-center gap-3 rounded-3xl bg-violet/10 px-5 py-4 text-left lg:hidden"
+            >
+              <span className="text-2xl text-violet" aria-hidden>
+                ✦
+              </span>
+              <span className="flex-1">
+                <span className="block font-semibold text-violet">Ask your agent to buy something</span>
+                <span className="text-sm text-muted">It pays from this wallet and logs every step</span>
+              </span>
+            </button>
           </div>
-
-          <div className="grid gap-4 md:grid-cols-2">
-            <section className="rounded-2xl border border-line bg-panel px-5 py-4">
-              <h2 className="font-semibold">Add money</h2>
-              <p className="text-sm text-muted mb-3">Pay with Stripe Checkout. Test card 4242 4242 4242 4242.</p>
-              <div className="flex flex-wrap items-center gap-2">
-                {PRESETS.map((p) => (
-                  <button
-                    key={p}
-                    onClick={() => setAmount(p)}
-                    className={`px-3 py-1.5 rounded-lg border text-sm tabular ${
-                      amount === p ? "border-accent text-accent bg-accent-soft" : "border-line"
-                    }`}
-                  >
-                    ${p}
-                  </button>
-                ))}
-                <input
-                  type="number"
-                  min={5}
-                  max={500}
-                  value={amount}
-                  onChange={(e) => setAmount(Number(e.target.value))}
-                  className="w-24 rounded-lg border border-line bg-bg px-2 py-1.5 text-sm tabular"
-                  aria-label="Custom amount in dollars"
-                />
-                <button
-                  onClick={topUp}
-                  disabled={toppingUp}
-                  className="ml-auto rounded-lg bg-ink text-panel px-4 py-1.5 text-sm font-medium disabled:opacity-50"
-                >
-                  {toppingUp ? "Opening Stripe…" : `Top up $${amount || 0}`}
-                </button>
-              </div>
-              <p className="text-xs text-muted mt-3">Total topped up: {s ? usd(s.toppedUp) : "—"}</p>
-            </section>
-
-            <section className="rounded-2xl border border-line bg-panel px-5 py-4">
-              <h2 className="font-semibold mb-3">Agent spend by merchant</h2>
-              {data?.byMerchant.length ? (
-                <ul className="space-y-2.5">
-                  {data.byMerchant.map((m) => (
-                    <li key={m.merchant} className="text-sm">
-                      <div className="flex justify-between mb-1">
-                        <span>{m.merchant}</span>
-                        <span className="tabular text-muted">
-                          {usd(m.total)} · {m.orders} order{m.orders === 1 ? "" : "s"}
-                        </span>
-                      </div>
-                      <div className="h-1.5 rounded-full bg-line overflow-hidden">
-                        <div className="h-full bg-accent rounded-full" style={{ width: `${(m.total / maxMerchant) * 100}%` }} />
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="text-sm text-muted">No agent purchases yet.</p>
-              )}
-            </section>
+          <div className={show("activity")}>
+            <Activity entries={data?.entries ?? []} freshIds={freshIds} />
           </div>
+        </div>
 
-          <LedgerTable entries={data?.entries || []} />
-        </main>
-
-        <aside className="min-w-0">
-          <AgentChat onActivity={load} />
+        <aside className={`min-w-0 ${show("agent")}`}>
+          <AgentChat
+            onActivity={load}
+            className="h-[calc(100dvh-10.5rem)] min-h-[420px] lg:sticky lg:top-6 lg:h-[min(820px,calc(100dvh-8.5rem))]"
+          />
         </aside>
       </div>
+
+      <nav
+        aria-label="Sections"
+        className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-panel/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl lg:hidden"
+      >
+        <ul className="mx-auto grid max-w-md grid-cols-3">
+          {TABS.map((t) => (
+            <li key={t.id}>
+              <button
+                onClick={() => go(t.id)}
+                aria-current={tab === t.id ? "page" : undefined}
+                className={`relative flex w-full flex-col items-center gap-0.5 py-2.5 text-xs font-semibold transition-colors ${
+                  tab === t.id ? "text-violet" : "text-muted"
+                }`}
+              >
+                <span className={`rounded-full px-4 py-1 transition-colors ${tab === t.id ? "bg-violet/12" : ""}`}>{t.icon}</span>
+                {t.label}
+                {t.id === "activity" && unseen > 0 && (
+                  <span className="absolute right-[26%] top-1.5 grid h-5 min-w-5 place-items-center rounded-full bg-rose px-1 text-[11px] text-white">
+                    {unseen}
+                  </span>
+                )}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </nav>
     </div>
   );
 }

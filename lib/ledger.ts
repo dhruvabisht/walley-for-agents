@@ -116,6 +116,28 @@ export async function placeHold(h: HoldInput): Promise<string | null> {
   return rows.length ? id : null;
 }
 
+// Logs a purchase the wallet refused (no balance, over the per-order limit), so the attempt is auditable.
+export async function recordDeclined(h: HoldInput, reason: string) {
+  await q(
+    `insert into ledger_entries (id, kind, status, amount, currency, description, merchant_id, merchant_name,
+        merchant_url, items, agent_request, ucp_checkout_id, error)
+     values ($1, 'purchase', 'failed', $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11)`,
+    [
+      randomUUID(),
+      -h.amount,
+      h.currency,
+      h.items.map((i) => `${i.quantity}× ${i.title}`).join(", "),
+      h.merchantId,
+      h.merchantName,
+      h.merchantUrl,
+      JSON.stringify(h.items),
+      h.agentRequest,
+      h.ucpCheckoutId,
+      reason,
+    ],
+  );
+}
+
 export async function attachSpt(entryId: string, sptId: string, mode: string) {
   await q(`update ledger_entries set spt_id = $2, spt_mode = $3 where id = $1`, [entryId, sptId, mode]);
 }
