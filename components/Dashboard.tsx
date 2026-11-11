@@ -7,8 +7,11 @@ import TopUp from "./TopUp";
 import MerchantSpend from "./MerchantSpend";
 import Activity from "./Activity";
 import AgentChat from "./AgentChat";
+import AgentKeys from "./AgentKeys";
+import SaveLogin from "./SaveLogin";
 
-type WalletData = { summary: Summary; entries: LedgerEntry[]; byMerchant: MerchantRow[] };
+type Account = { id: string; name: string; kind: "human" | "agent"; email: string | null; is_demo: boolean; has_password: boolean };
+type WalletData = { account: Account; summary: Summary; entries: LedgerEntry[]; byMerchant: MerchantRow[] };
 type Tab = "wallet" | "activity" | "agent";
 
 const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
@@ -57,6 +60,12 @@ export default function Dashboard() {
   const load = useCallback(async () => {
     try {
       const res = await fetch("/api/wallet", { cache: "no-store" });
+      if (res.status === 401) {
+        // Session expired or revoked: clear the cookie and go sign in.
+        await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+        window.location.replace("/login");
+        return;
+      }
       const json = await res.json();
       if (!res.ok) throw new Error(json.message);
       const next = json as WalletData;
@@ -84,7 +93,9 @@ export default function Dashboard() {
       if (p === "success") setNotice({ text: "Money added. Your agent can spend it now.", tone: "good" });
       if (p === "cancelled") setNotice({ text: "Top-up cancelled. No money was taken.", tone: "bad" });
       if (p === "unpaid") setNotice({ text: "Stripe hasn't confirmed that payment yet.", tone: "bad" });
-      if (p) window.history.replaceState({}, "", "/");
+      const welcome = new URLSearchParams(window.location.search).get("welcome");
+      if (welcome === "agent") setNotice({ text: "You're in. This is the wallet your agent opened for you.", tone: "good" });
+      if (p || welcome) window.history.replaceState({}, "", "/");
     }, 0);
     const poll = setInterval(load, 4000);
     return () => {
@@ -107,6 +118,12 @@ export default function Dashboard() {
   }
 
   const show = (t: Tab) => (tab === t ? "block" : "hidden") + " lg:block";
+  const account = data?.account;
+
+  async function signOut() {
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+    window.location.replace("/login");
+  }
 
   return (
     <div className="mx-auto max-w-7xl px-4 pb-32 pt-5 sm:px-6 lg:pb-10 lg:pt-8">
@@ -121,10 +138,47 @@ export default function Dashboard() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <a href="/docs" className="rounded-full bg-violet/10 px-3 py-1.5 text-xs font-semibold text-violet hover:bg-violet/20">
+          <a
+            href="/docs"
+            className="hidden rounded-full bg-violet/10 px-3 py-1.5 text-xs font-semibold text-violet hover:bg-violet/20 sm:inline"
+          >
             For agents
           </a>
           <span className="rounded-full bg-amber/15 px-3 py-1.5 text-xs font-semibold text-amber">Test mode</span>
+          {account && (
+            <details className="relative">
+              <summary
+                className="flex cursor-pointer list-none items-center gap-2 rounded-full border border-line bg-panel py-1 pl-1 pr-3 text-sm font-semibold [&::-webkit-details-marker]:hidden"
+                aria-label={`Account: ${account.name}`}
+              >
+                <span
+                  className={`grid h-7 w-7 place-items-center rounded-full text-xs font-bold text-white ${
+                    account.kind === "agent" ? "bg-glacier" : "bg-violet"
+                  }`}
+                  aria-hidden
+                >
+                  {account.kind === "agent" ? "✦" : account.name.slice(0, 1).toUpperCase()}
+                </span>
+                <span className="hidden max-w-[10rem] truncate sm:inline">{account.name}</span>
+              </summary>
+              <div className="absolute right-0 z-30 mt-2 w-64 rounded-2xl border border-line bg-panel p-2 shadow-[0_18px_40px_-20px_rgba(28,24,56,0.45)]">
+                <div className="px-3 py-2">
+                  <p className="truncate font-semibold">{account.name}</p>
+                  <p className="truncate text-xs text-muted">{account.email ?? "No email saved yet"}</p>
+                  <p className="mt-1 text-xs text-muted">
+                    {account.kind === "agent" ? "Agent account" : "Personal account"}
+                    {account.is_demo ? " · shared demo" : ""}
+                  </p>
+                </div>
+                <a href="/docs" className="block rounded-xl px-3 py-2 text-sm hover:bg-paper sm:hidden">
+                  For agents
+                </a>
+                <button onClick={signOut} className="w-full rounded-xl px-3 py-2 text-left text-sm font-semibold text-rose hover:bg-rose/10">
+                  Sign out
+                </button>
+              </div>
+            </details>
+          )}
         </div>
       </header>
 
@@ -150,11 +204,13 @@ export default function Dashboard() {
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_400px]">
         <div className="min-w-0 space-y-6">
           <div className={`space-y-6 ${show("wallet")}`}>
+            {account && !account.has_password && <SaveLogin needsEmail={!account.email} onSaved={load} />}
             <WalletCard summary={data?.summary ?? null} byMerchant={data?.byMerchant ?? []} />
             <div className="grid gap-6 md:grid-cols-2">
               <TopUp onError={(text) => setNotice({ text, tone: "bad" })} />
               <MerchantSpend rows={data?.byMerchant ?? []} />
             </div>
+            <AgentKeys onError={(text) => setNotice({ text, tone: "bad" })} />
             <button
               onClick={() => go("agent")}
               className="flex w-full items-center gap-3 rounded-3xl bg-violet/10 px-5 py-4 text-left lg:hidden"

@@ -1,12 +1,17 @@
 import { getMerchant } from "@/lib/merchants";
 import { payForCheckout, WalletDeclined } from "@/lib/wallet";
 import { errorResponse, redact } from "@/lib/http";
+import { requireAccount } from "@/lib/auth";
+import { refillDemo } from "@/lib/demo";
 
-// Public agent API: pay for a UCP checkout with the Walley wallet.
+// Agent API: pay for a UCP checkout with the caller's Walley wallet.
 // POST /api/wallet/pay { merchant_id, checkout_id, agent_name?, reason? }
-// Sandbox demo: no auth. Guardrails: balance hold, per-order limit, SPT capped at the exact total.
+// Auth: Authorization: Bearer wk_test_... (or a signed-in session).
+// Guardrails: balance hold, per-order limit, SPT capped at the exact total.
 export async function POST(req: Request) {
   try {
+    const account = await requireAccount(req);
+    if (account.is_demo) await refillDemo(account.id); // the public demo wallet never runs dry
     const body = (await req.json().catch(() => ({}))) as {
       merchant_id?: string;
       checkout_id?: string;
@@ -23,6 +28,7 @@ export async function POST(req: Request) {
     const origin = new URL(req.url).origin;
     try {
       const r = await payForCheckout({
+        accountId: account.id,
         ucpBaseUrl: `${origin}/api/ucp/${body.merchant_id}`,
         checkoutId: body.checkout_id,
         agentRequest: `[${agent}] ${reason}`,

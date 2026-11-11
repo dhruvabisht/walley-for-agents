@@ -51,7 +51,42 @@ const SCHEMA = [
      updated_at timestamptz not null default now()
    )`,
   `create table if not exists wallet_config (key text primary key, value text not null)`,
+  // ---- Accounts: every person or agent that signs up gets its own wallet ----
+  `create table if not exists accounts (
+     id text primary key,
+     created_at timestamptz not null default now(),
+     kind text not null check (kind in ('human','agent')),
+     name text not null,
+     email text unique,                  -- lowercased; null for an agent account nobody has claimed yet
+     password_hash text,                 -- scrypt; null until someone sets a password
+     is_demo boolean not null default false
+   )`,
+  `create table if not exists sessions (
+     token_hash text primary key,        -- sha256 of the cookie value; the raw token is never stored
+     account_id text not null references accounts(id) on delete cascade,
+     created_at timestamptz not null default now(),
+     expires_at timestamptz not null
+   )`,
+  `create table if not exists api_keys (
+     id text primary key,
+     account_id text not null references accounts(id) on delete cascade,
+     key_hash text not null unique,      -- sha256 of the key; the key is shown once at creation
+     prefix text not null,
+     label text not null,
+     created_at timestamptz not null default now(),
+     last_used_at timestamptz,
+     revoked_at timestamptz
+   )`,
+  `create table if not exists sign_in_links (
+     token_hash text primary key,
+     account_id text not null references accounts(id) on delete cascade,
+     expires_at timestamptz not null,
+     used_at timestamptz
+   )`,
+  `alter table ledger_entries add column if not exists account_id text references accounts(id)`,
+  `create index if not exists ledger_account_idx on ledger_entries (account_id, created_at desc)`,
 ];
+
 
 async function ensureSchema() {
   if (!schemaReady) {

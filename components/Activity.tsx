@@ -106,7 +106,7 @@ export default function Activity({ entries, freshIds }: { entries: LedgerEntry[]
                             {credit ? "Money added" : e.description}
                           </span>
                           <span className="flex items-center gap-2 text-sm text-muted">
-                            <span className="truncate">{credit ? "Stripe Checkout" : e.merchant_name}</span>
+                            <span className="truncate">{credit ? (e.stripe_checkout_session_id ? "Stripe Checkout" : "Demo credit, test money") : e.merchant_name}</span>
                             <span className="tabular shrink-0">{timeOf(e.created_at)}</span>
                           </span>
                         </span>

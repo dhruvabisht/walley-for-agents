@@ -26,44 +26,45 @@ export type LedgerEntry = {
 };
 
 // Money the agent can still spend: settled top-ups minus purchases that are settled or on hold.
-const AVAILABLE_SQL = `
+// Scoped to one account's wallet; `param` is the placeholder holding the account id.
+const availableSql = (param: string) => `
   select coalesce(sum(amount) filter (where kind = 'topup' and status = 'settled'), 0)
        + coalesce(sum(amount) filter (where kind = 'purchase' and status in ('pending','settled')), 0) as available
-  from ledger_entries`;
+  from ledger_entries where account_id = ${param}`;
 
-export async function getSummary() {
+export async function getSummary(accountId: string) {
   const [row] = await q<Record<string, string>>(`
     select
       coalesce(sum(amount) filter (where kind = 'topup' and status = 'settled'), 0) as topped_up,
       coalesce(-sum(amount) filter (where kind = 'purchase' and status = 'settled'), 0) as spent,
       coalesce(-sum(amount) filter (where kind = 'purchase' and status = 'pending'), 0) as held,
       count(*) filter (where kind = 'purchase' and status = 'settled') as purchases
-    from ledger_entries`);
+    from ledger_entries where account_id = $1`, [accountId]);
   const toppedUp = Number(row.topped_up);
   const spent = Number(row.spent);
   const held = Number(row.held);
   return { toppedUp, spent, held, available: toppedUp - spent - held, purchases: Number(row.purchases) };
 }
 
-export async function listEntries(limit = 200) {
-  return q<LedgerEntry>(`select * from ledger_entries order by created_at desc limit $1`, [limit]);
+export async function listEntries(accountId: string, limit = 200) {
+  return q<LedgerEntry>(`select * from ledger_entries where account_id = $1 order by created_at desc limit $2`, [accountId, limit]);
 }
 
-export async function spendByMerchant() {
+export async function spendByMerchant(accountId: string) {
   return q<{ merchant_name: string; total: string; orders: string }>(`
     select merchant_name, -sum(amount) as total, count(*) as orders
-    from ledger_entries where kind = 'purchase' and status = 'settled'
-    group by merchant_name order by total desc`);
+    from ledger_entries where account_id = $1 and kind = 'purchase' and status = 'settled'
+    group by merchant_name order by total desc`, [accountId]);
 }
 
 // ---- Top-ups ----------------------------------------------------------------
 
-export async function recordPendingTopup(amount: number, checkoutSessionId: string) {
+export async function recordPendingTopup(accountId: string, amount: number, checkoutSessionId: string) {
   await q(
-    `insert into ledger_entries (id, kind, status, amount, description, stripe_checkout_session_id)
-     values ($1, 'topup', 'pending', $2, 'Wallet top-up via Stripe Checkout', $3)
+    `insert into ledger_entries (id, account_id, kind, status, amount, description, stripe_checkout_session_id)
+     values ($1, $2, 'topup', 'pending', $3, 'Wallet top-up via Stripe Checkout', $4)
      on conflict (stripe_checkout_session_id) do nothing`,
-    [randomUUID(), amount, checkoutSessionId],
+    [randomUUID(), accountId, amount, checkoutSessionId],
   );
 }
 
@@ -81,6 +82,7 @@ export async function settleTopup(checkoutSessionId: string, paymentIntentId: st
 // ---- Agent purchases --------------------------------------------------------
 
 export type HoldInput = {
+  accountId: string; // whose wallet pays
   amount: number; // positive cents
   currency: string;
   merchantId: string;
@@ -96,9 +98,9 @@ export async function placeHold(h: HoldInput): Promise<string | null> {
   const id = randomUUID();
   const rows = await q(
     `insert into ledger_entries (id, kind, status, amount, currency, description, merchant_id, merchant_name,
-        merchant_url, items, agent_request, ucp_checkout_id)
-     select $1, 'purchase', 'pending', $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10
-     where (${AVAILABLE_SQL}) >= $11
+        merchant_url, items, agent_request, ucp_checkout_id, account_id)
+     select $1, 'purchase', 'pending', $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $12
+     where (${availableSql("$12")}) >= $11
      returning id`,
     [
       id,
@@ -112,6 +114,7 @@ export async function placeHold(h: HoldInput): Promise<string | null> {
       h.agentRequest,
       h.ucpCheckoutId,
       h.amount,
+      h.accountId,
     ],
   );
   return rows.length ? id : null;
@@ -121,8 +124,8 @@ export async function placeHold(h: HoldInput): Promise<string | null> {
 export async function recordDeclined(h: HoldInput, reason: string) {
   await q(
     `insert into ledger_entries (id, kind, status, amount, currency, description, merchant_id, merchant_name,
-        merchant_url, items, agent_request, ucp_checkout_id, error)
-     values ($1, 'purchase', 'failed', $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11)`,
+        merchant_url, items, agent_request, ucp_checkout_id, error, account_id)
+     values ($1, 'purchase', 'failed', $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12)`,
     [
       randomUUID(),
       -h.amount,
@@ -135,6 +138,7 @@ export async function recordDeclined(h: HoldInput, reason: string) {
       h.agentRequest,
       h.ucpCheckoutId,
       reason,
+      h.accountId,
     ],
   );
 }
@@ -157,7 +161,7 @@ export async function releaseHold(entryId: string, error: string) {
   ]);
 }
 
-export async function availableBalance(): Promise<number> {
-  const [row] = await q<{ available: string }>(AVAILABLE_SQL);
+export async function availableBalance(accountId: string): Promise<number> {
+  const [row] = await q<{ available: string }>(availableSql("$1"), [accountId]);
   return Number(row.available);
 }

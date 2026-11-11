@@ -9,9 +9,24 @@ export const metadata: Metadata = {
 
 const BASE = "https://walley-ten.vercel.app";
 
-const AGENT_PROMPT = `You can shop for me with my Walley wallet. Read ${BASE}/llms.txt and follow it exactly. Check my balance first, show me the merchant, items and total, and only pay after I say yes. Use your name as agent_name.`;
+const AGENT_PROMPT = `You can shop for me with my Walley wallet. Read ${BASE}/llms.txt and follow it exactly. Send my Walley API key on every request as "Authorization: Bearer <my key>". Check my balance first, show me the merchant, items and total, and only pay after I say yes. Use your name as agent_name.`;
+
+const SIGNUP_REQUEST = `curl -X POST ${BASE}/api/agents/signup \\
+  -H 'Content-Type: application/json' \\
+  -d '{ "agent_name": "Ava (Claude)" }'`;
+
+const SIGNUP_RESPONSE = `201 Created
+{
+  "account": { "id": "acct_…", "name": "Ava (Claude)", "kind": "agent" },
+  "api_key": "wk_test_…",          // shown once: store it
+  "sign_in_link": "${BASE}/api/auth/link?token=wl_…",
+  "sign_in_link_expires_at": "…"   // one use, 7 days
+}`;
+
+const DEMO_KEY = "wk_test_demo_scout_public";
 
 const STEPS = [
+  { title: "Get a key", call: "POST /api/agents/signup", text: "Or use a key your person created on the dashboard. Send it on every call." },
   { title: "Check the balance", call: "GET /api/wallet", text: "summary.available is what the agent may spend, in cents." },
   { title: "Find products", call: "GET /api/catalog?q=coffee", text: "Each product has a merchant_id, an id and a price in cents." },
   { title: "Open a UCP checkout", call: "POST /api/ucp/{merchant_id}/checkout-sessions", text: "Nothing is charged. You get a checkout id and the total." },
@@ -20,16 +35,19 @@ const STEPS = [
 ];
 
 const ENDPOINTS: [string, string, string][] = [
-  ["GET", "/api/wallet", "Balance, ledger entries and spend per merchant"],
+  ["POST", "/api/agents/signup", "Open a wallet: returns an API key and a sign-in link for your person (no key needed)"],
+  ["GET", "/api/wallet", "Balance, ledger entries and spend per merchant (key)"],
+  ["POST", "/api/wallet/topup", "Stripe Checkout link your person opens to add money (key)"],
   ["GET", "/api/catalog?q=&merchant=", "Search products across merchants"],
   ["GET", "/.well-known/ucp", "UCP discovery: merchants and checkout endpoints"],
   ["POST", "/api/ucp/{merchant_id}/checkout-sessions", "Open a checkout with line_items"],
   ["GET", "/api/ucp/{merchant_id}/checkout-sessions/{id}", "Read a checkout"],
   ["POST", "/api/ucp/{merchant_id}/checkout-sessions/{id}/cancel", "Cancel a checkout"],
-  ["POST", "/api/wallet/pay", "Pay for a checkout from the wallet"],
+  ["POST", "/api/wallet/pay", "Pay for a checkout from the wallet (key)"],
 ];
 
 const PAY_REQUEST = `curl -X POST ${BASE}/api/wallet/pay \\
+  -H "Authorization: Bearer $WALLEY_KEY" \\
   -H 'Content-Type: application/json' \\
   -d '{
     "merchant_id": "night-owl-coffee",
@@ -59,12 +77,13 @@ const PAY_DECLINED = `402 Payment Required
 }`;
 
 const CURL_FLOW = `B=${BASE}
-curl -s "$B/api/wallet" | jq .summary
+K="Authorization: Bearer ${DEMO_KEY}"   # public demo wallet; use your own key
+curl -s -H "$K" "$B/api/wallet" | jq .summary
 curl -s "$B/api/catalog?q=cold%20brew" | jq '.products[0]'
 CID=$(curl -s -X POST "$B/api/ucp/night-owl-coffee/checkout-sessions" \\
   -H 'Content-Type: application/json' \\
   -d '{"line_items":[{"id":"NOC-COLD","quantity":1}]}' | jq -r .id)
-curl -s -X POST "$B/api/wallet/pay" -H 'Content-Type: application/json' \\
+curl -s -X POST "$B/api/wallet/pay" -H "$K" -H 'Content-Type: application/json' \\
   -d "{\\"merchant_id\\":\\"night-owl-coffee\\",\\"checkout_id\\":\\"$CID\\",\\"agent_name\\":\\"curl demo\\",\\"reason\\":\\"testing Walley\\"}"`;
 
 function Code({ children }: { children: string }) {
@@ -118,8 +137,35 @@ export default function Docs() {
             <CopyButton text={AGENT_PROMPT} label="Copy prompt" />
           </div>
           <p className="text-muted">
-            This demo runs in Stripe test mode, so no real money moves. Add test money on the{" "}
-            <Link href="/" className="text-violet underline underline-offset-2">dashboard</Link> with card 4242 4242 4242 4242.
+            Get the key from <strong>Connect an agent</strong> on your{" "}
+            <Link href="/" className="text-violet underline underline-offset-2">dashboard</Link>. Walley runs in Stripe test
+            mode, so no real money moves. Add test money with card 4242 4242 4242 4242.
+          </p>
+        </Section>
+
+        <Section id="access" title="Accounts and API keys">
+          <p>
+            Every Walley account has its own wallet and ledger. People sign in at{" "}
+            <Link href="/login" className="text-violet underline underline-offset-2">/login</Link>. Agents send an API key on
+            every request:
+          </p>
+          <Code>{`Authorization: Bearer wk_test_…`}</Code>
+          <p>There are two ways to get one:</p>
+          <ul className="list-disc space-y-2 pl-5">
+            <li>
+              <strong>Your person creates it.</strong> On the dashboard, under Connect an agent. They can revoke it at any
+              time, and the agent stops working at once.
+            </li>
+            <li>
+              <strong>The agent signs up itself.</strong> One request opens a new wallet. Give the sign-in link to your
+              person: it signs them in once, and they then save an email and password.
+            </li>
+          </ul>
+          <Code>{SIGNUP_REQUEST}</Code>
+          <Code>{SIGNUP_RESPONSE}</Code>
+          <p className="text-muted">
+            Just trying it out? The public demo key <code className="font-mono text-violet">{DEMO_KEY}</code> opens a shared
+            test wallet that tops itself back up. Without a valid key, wallet endpoints return 401.
           </p>
         </Section>
 

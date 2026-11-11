@@ -1,9 +1,10 @@
 # Walley
 
-> Walley is a prepaid wallet that AI agents can spend on behalf of a person. The person adds money through Stripe Checkout. An agent finds products, opens a checkout with a merchant over the Universal Commerce Protocol (UCP), and asks Walley to pay. Walley holds the funds, issues a Stripe Shared Payment Token (SPT) scoped to that one order, and the merchant charges it. Every purchase appears in the person's ledger at https://walley-ten.vercel.app.
+> Walley is a prepaid wallet that AI agents can spend on behalf of a person. The person adds money through Stripe Checkout. An agent finds products, opens a checkout with a merchant over the Universal Commerce Protocol (UCP), and asks Walley to pay. Walley holds the funds, issues a Stripe Shared Payment Token (SPT) scoped to that one order, and the merchant charges it. Every purchase appears in the person's ledger at https://walley-ten.vercel.app. Each account has its own wallet.
 
 Base URL: https://walley-ten.vercel.app
-Mode: Stripe sandbox (test money). No authentication in this demo.
+Mode: Stripe sandbox (test money). No real money moves.
+Auth: send `Authorization: Bearer <api_key>` on every wallet call. Without a valid key you get 401.
 Money: all amounts are integers in US cents (1450 = $14.50). Currency is "usd".
 
 ## Rules for agents
@@ -13,8 +14,16 @@ Money: all amounts are integers in US cents (1450 = $14.50). Currency is "usd".
 - If Walley declines (HTTP 402), do not retry. Tell the user why, using `message`, `available_cents` and `shortfall_cents`. Offer them the `affordable_items`, or ask them to add money at the base URL.
 - Never invent product ids or checkout ids. Use the ones the API returns.
 
+## Get an API key
+
+Pick one:
+- Your person gives you one. They create it on the dashboard under "Connect an agent" and can revoke it at any time.
+- You open a wallet yourself: `POST /api/agents/signup` (no key needed). Store `api_key`; it is shown once. Give `sign_in_link` to your person: it signs them in once (valid 7 days) so they can add money and watch the ledger.
+- Just testing? Use the public demo key `wk_test_demo_scout_public`. It opens a shared test wallet that tops itself back up.
+
 ## The flow
 
+0. Get an API key (above). Send it on every call below.
 1. `GET /api/wallet` → check `summary.available` (cents) before you shop.
 2. `GET /api/catalog?q=<words>` → find products. Each result has `merchant_id`, `id` (product id), `title` and `price` (cents).
 3. `POST /api/ucp/{merchant_id}/checkout-sessions` → open a UCP checkout. Nothing is charged yet.
@@ -24,7 +33,25 @@ Money: all amounts are integers in US cents (1450 = $14.50). Currency is "usd".
 
 ## Endpoints
 
-### GET /api/wallet
+Calls marked (key) need `Authorization: Bearer <api_key>`. Catalog and UCP merchant endpoints are public.
+
+### POST /api/agents/signup
+Open a new Walley wallet. Body (only `agent_name` is required):
+```json
+{ "agent_name": "Ava (Claude)", "email": "optional, for your person", "password": "optional, 8+ characters" }
+```
+201:
+```json
+{ "account": { "id": "acct_…", "name": "Ava (Claude)", "kind": "agent", "email": null },
+  "api_key": "wk_test_…", "sign_in_link": "https://walley-ten.vercel.app/api/auth/link?token=wl_…",
+  "sign_in_link_expires_at": "…" }
+```
+The wallet starts at $0. Ask your person to add money, or use `POST /api/wallet/topup`.
+
+### POST /api/wallet/topup (key)
+Body: `{ "amount": 25 }` (US dollars, 5 to 500). Returns `{ "url": "https://checkout.stripe.com/…" }`. Give that link to your person; the money lands once they pay (test card 4242 4242 4242 4242). Never try to pay it yourself.
+
+### GET /api/wallet (key)
 Balance and ledger.
 Response: `{ summary: { available, spent, held, toppedUp, purchases }, entries: [...], byMerchant: [...] }`
 Each entry: `kind` ("topup" | "purchase"), `status` ("pending" | "settled" | "failed"), `amount` (negative for purchases), `merchant_name`, `items`, `agent_request`, `spt_id`, `payment_intent_id`, `created_at`, `error`.
@@ -49,7 +76,7 @@ Read a checkout.
 ### POST /api/ucp/{merchant_id}/checkout-sessions/{id}/cancel
 Cancel a checkout you no longer need.
 
-### POST /api/wallet/pay
+### POST /api/wallet/pay (key)
 Pay for a checkout with the Walley wallet. Body:
 ```json
 {
@@ -70,7 +97,7 @@ Pay for a checkout with the Walley wallet. Body:
   "total_cents": 3000, "available_cents": 400, "shortfall_cents": 2600,
   "affordable_items": [ { "product_id": "…", "title": "…", "price_cents": 1200 } ], "suggested_topup_dollars": 26 }
 ```
-400 → bad `merchant_id` or `checkout_id`. 502 → the merchant could not charge the token (the hold is released).
+400 → bad `merchant_id` or `checkout_id`. 401 → missing or revoked API key. 502 → the merchant could not charge the token (the hold is released).
 
 ### Merchant side (what Walley sends)
 `POST /api/ucp/{merchant_id}/checkout-sessions/{id}/complete` with `{ "payment_data": { "token": "spt_…", "provider": "stripe" } }`. The merchant creates a Stripe PaymentIntent with `payment_method_data[shared_payment_granted_token]`. Agents should call `/api/wallet/pay` instead of this endpoint; they never hold a token themselves.
@@ -86,16 +113,18 @@ Pay for a checkout with the Walley wallet. Body:
 
 ```bash
 B=https://walley-ten.vercel.app
-curl -s "$B/api/wallet" | jq .summary
+K="Authorization: Bearer wk_test_demo_scout_public"   # or your own key
+curl -s -H "$K" "$B/api/wallet" | jq .summary
 curl -s "$B/api/catalog?q=cold%20brew" | jq '.products[0]'
 CID=$(curl -s -X POST "$B/api/ucp/night-owl-coffee/checkout-sessions" -H 'Content-Type: application/json' \
   -d '{"line_items":[{"id":"NOC-COLD","quantity":1}]}' | jq -r .id)
-curl -s -X POST "$B/api/wallet/pay" -H 'Content-Type: application/json' \
+curl -s -X POST "$B/api/wallet/pay" -H "$K" -H 'Content-Type: application/json' \
   -d "{\"merchant_id\":\"night-owl-coffee\",\"checkout_id\":\"$CID\",\"agent_name\":\"curl demo\",\"reason\":\"testing Walley\"}" | jq
 ```
 
 ## Links
 
-- Dashboard (see the ledger, add money): https://walley-ten.vercel.app
+- Dashboard (see the ledger, add money, create keys): https://walley-ten.vercel.app
+- Sign in or create an account: https://walley-ten.vercel.app/login
 - Human docs: https://walley-ten.vercel.app/docs
 - Source: https://github.com/dhruvabisht/walley-for-agents

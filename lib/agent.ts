@@ -88,7 +88,7 @@ const TOOLS = [
 
 const usd = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 
-async function runTool(name: string, args: Record<string, unknown>, origin: string, agentRequest: string) {
+async function runTool(name: string, args: Record<string, unknown>, origin: string, agentRequest: string, accountId: string) {
   const ucp = (merchantId: string) => `${origin}/api/ucp/${merchantId}`;
   switch (name) {
     case "search_products": {
@@ -96,7 +96,7 @@ async function runTool(name: string, args: Record<string, unknown>, origin: stri
       return { result: results, summary: `Found ${results.length} product${results.length === 1 ? "" : "s"}` };
     }
     case "get_wallet_balance": {
-      const available = await availableBalance();
+      const available = await availableBalance(accountId);
       return { result: { available_cents: available }, summary: `Balance ${usd(available)}` };
     }
     case "create_checkout": {
@@ -117,6 +117,7 @@ async function runTool(name: string, args: Record<string, unknown>, origin: stri
     }
     case "complete_checkout": {
       const r = await payForCheckout({
+        accountId,
         ucpBaseUrl: ucp(String(args.merchant_id)),
         checkoutId: String(args.checkout_id),
         agentRequest,
@@ -140,7 +141,7 @@ async function runTool(name: string, args: Record<string, unknown>, origin: stri
   }
 }
 
-export async function runAgent(history: ChatMessage[], origin: string) {
+export async function runAgent(history: ChatMessage[], origin: string, accountId: string) {
   const messages: ChatMessage[] = [{ role: "system", content: SYSTEM }, ...history.filter((m) => m.role !== "system")];
   const steps: AgentStep[] = [];
   const userTexts = history.filter((m) => m.role === "user").map((m) => (m as { content: string }).content);
@@ -169,7 +170,7 @@ export async function runAgent(history: ChatMessage[], origin: string) {
         args = JSON.parse(call.function.arguments || "{}");
       } catch {}
       try {
-        const { result, summary } = await runTool(call.function.name, args, origin, agentRequest);
+        const { result, summary } = await runTool(call.function.name, args, origin, agentRequest, accountId);
         const keep = call.function.name === "complete_checkout" || call.function.name === "create_checkout";
         steps.push({ tool: call.function.name, args, ok: true, summary, data: keep ? (result as Record<string, unknown>) : undefined });
         messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });

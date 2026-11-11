@@ -80,6 +80,7 @@ type UcpCheckout = {
 
 // Full purchase: hold funds -> mint SPT -> UCP complete -> settle (or release on failure).
 export async function payForCheckout(opts: {
+  accountId: string; // the wallet that pays
   ucpBaseUrl: string; // e.g. https://host/api/ucp/alpine-supply
   checkoutId: string;
   agentRequest: string;
@@ -96,6 +97,7 @@ export async function payForCheckout(opts: {
   if (total <= 0) throw new Error("Checkout total is zero");
 
   const hold: HoldInput = {
+    accountId: opts.accountId,
     amount: total,
     currency: checkout.currency,
     merchantId: checkout.merchant.id,
@@ -107,7 +109,7 @@ export async function payForCheckout(opts: {
   };
   const decline = async (reason: "insufficient_balance" | "over_order_limit", text: string) => {
     await recordDeclined(hold, text);
-    const available = await availableBalance();
+    const available = await availableBalance(opts.accountId);
     const limit = Math.min(available, config.maxOrderAmount());
     const shortfall = Math.max(0, total - available);
     return new WalletDeclined(text, {
