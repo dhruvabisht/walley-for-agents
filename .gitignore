@@ -41,8 +41,10 @@ next-env.d.ts
 .env.*
 !.env.example
 
-# Walley: keep ALL Stripe Projects state out of git (tools may rewrite the block above)
-.projects/
+# Walley: ignore Stripe Projects state except state.json (stack manifest, no credentials;
+# the projects.dev submission checks for it). Tools may rewrite the block above.
+.projects/*
+!.projects/state.json
 .env
 .env.*
 !.env.example
