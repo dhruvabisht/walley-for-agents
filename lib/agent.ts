@@ -3,6 +3,7 @@ import { config } from "./config";
 import { MERCHANTS, searchProducts } from "./merchants";
 import { availableBalance } from "./ledger";
 import { payForCheckout, WalletDeclined } from "./wallet";
+import { redact } from "./http";
 
 export type ChatMessage =
   | { role: "system" | "user"; content: string }
@@ -173,7 +174,7 @@ export async function runAgent(history: ChatMessage[], origin: string) {
         steps.push({ tool: call.function.name, args, ok: true, summary, data: keep ? (result as Record<string, unknown>) : undefined });
         messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
       } catch (e) {
-        const err = e instanceof Error ? e.message : String(e);
+        const err = redact(e instanceof Error ? e.message : String(e));
         const details = e instanceof WalletDeclined ? { declined: true, ...e.details } : undefined;
         steps.push({ tool: call.function.name, args, ok: false, summary: err, data: details });
         messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify({ error: err, ...details }) });

@@ -1,7 +1,8 @@
 // Central place for configuration. Values come from .env (written by `stripe projects env --pull`).
 // Nothing here is ever sent to the browser.
 
-function required(name: string, value: string | undefined): string {
+function required(name: string, raw: string | undefined): string {
+  const value = raw?.trim().replace(/^['"]|['"]$/g, "");
   if (!value) throw new Error(`Missing environment variable ${name}. Run \`stripe projects env --pull\`.`);
   return value;
 }

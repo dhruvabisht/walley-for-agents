@@ -121,7 +121,7 @@ export async function completeCheckout(
     pi = await chargeSpt(token, total, row.currency, row.id);
   } catch (e) {
     const msg = e instanceof StripeApiError ? e.message : String(e);
-    throw new UcpError(402, "payment_failed", msg);
+    throw new UcpError(402, "payment_failed", msg.replace(/[a-z][a-z0-9+.-]*:\/\/[^\s@]+@\S+/gi, "[redacted]"));
   }
   if (pi.status !== "succeeded") throw new UcpError(402, "payment_failed", `PaymentIntent ${pi.id} is ${pi.status}`);
 

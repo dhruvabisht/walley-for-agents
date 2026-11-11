@@ -1,0 +1,13 @@
+# Never upload secrets or local tooling state to Vercel
+.env
+.env.*
+.projects
+.vercel
+.playwright-mcp
+.agents
+.claude
+.cursor
+node_modules
+.next
+*.pem
+*.key

@@ -1,10 +1,6 @@
 # ============ SECRETS: never commit ============
 # Stripe Projects writes every provider key here
-.env
-.env.*
-!.env.example
 # Stripe Projects state, vault and cache (may hold credentials) - ignore the whole folder
-.projects/
 # Vercel link + local tokens
 .vercel
 # Keys / certs
@@ -36,3 +32,11 @@ next-env.d.ts
 
 # Browser test artifacts
 .playwright-mcp/
+
+.projects/cache
+.projects/vault
+.projects/state.test.json
+.projects/state.local.test.json
+.env
+.env.*
+!.env.example

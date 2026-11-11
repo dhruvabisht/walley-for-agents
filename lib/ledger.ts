@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { q } from "./db";
+import { redact } from "./http";
 
 export type LedgerEntry = {
   id: string;
@@ -152,7 +153,7 @@ export async function settlePurchase(entryId: string, paymentIntentId: string, c
 export async function releaseHold(entryId: string, error: string) {
   await q(`update ledger_entries set status = 'failed', error = $2 where id = $1 and status = 'pending'`, [
     entryId,
-    error.slice(0, 500),
+    redact(error).slice(0, 500),
   ]);
 }
 
