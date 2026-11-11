@@ -45,6 +45,7 @@ next-env.d.ts
 # the projects.dev submission checks for it). Tools may rewrite the block above.
 .projects/*
 !.projects/state.json
+!.projects/state.local.json
 .env
 .env.*
 !.env.example
