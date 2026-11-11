@@ -1,0 +1,101 @@
+# Walley
+
+> Walley is a prepaid wallet that AI agents can spend on behalf of a person. The person adds money through Stripe Checkout. An agent finds products, opens a checkout with a merchant over the Universal Commerce Protocol (UCP), and asks Walley to pay. Walley holds the funds, issues a Stripe Shared Payment Token (SPT) scoped to that one order, and the merchant charges it. Every purchase appears in the person's ledger at https://walley-ten.vercel.app.
+
+Base URL: https://walley-ten.vercel.app
+Mode: Stripe sandbox (test money). No authentication in this demo.
+Money: all amounts are integers in US cents (1450 = $14.50). Currency is "usd".
+
+## Rules for agents
+
+- Only buy what your user explicitly asked for. Show them the merchant, items and total, and get a yes before you pay.
+- Always send `agent_name` and a short `reason` (what the user asked for) when you pay. The person sees both in their Walley ledger.
+- If Walley declines (HTTP 402), do not retry. Tell the user why, using `message`, `available_cents` and `shortfall_cents`. Offer them the `affordable_items`, or ask them to add money at the base URL.
+- Never invent product ids or checkout ids. Use the ones the API returns.
+
+## The flow
+
+1. `GET /api/wallet` → check `summary.available` (cents) before you shop.
+2. `GET /api/catalog?q=<words>` → find products. Each result has `merchant_id`, `id` (product id), `title` and `price` (cents).
+3. `POST /api/ucp/{merchant_id}/checkout-sessions` → open a UCP checkout. Nothing is charged yet.
+4. Confirm with your user: merchant, items, total.
+5. `POST /api/wallet/pay` → Walley pays. Returns the order, the SPT id and the Stripe PaymentIntent.
+6. The purchase is now in `GET /api/wallet` → `entries`, and on the Walley dashboard.
+
+## Endpoints
+
+### GET /api/wallet
+Balance and ledger.
+Response: `{ summary: { available, spent, held, toppedUp, purchases }, entries: [...], byMerchant: [...] }`
+Each entry: `kind` ("topup" | "purchase"), `status` ("pending" | "settled" | "failed"), `amount` (negative for purchases), `merchant_name`, `items`, `agent_request`, `spt_id`, `payment_intent_id`, `created_at`, `error`.
+
+### GET /api/catalog?q=&merchant=
+Search products. Both parameters are optional; no `q` lists everything.
+Merchants: `alpine-supply` (outdoor and ski gear), `night-owl-coffee` (coffee), `paperleaf-books` (books).
+
+### GET /.well-known/ucp
+UCP discovery: the merchants and their checkout endpoints.
+
+### POST /api/ucp/{merchant_id}/checkout-sessions
+Open a checkout. Body:
+```json
+{ "line_items": [ { "id": "NOC-COLD", "quantity": 1 } ] }
+```
+Response (201): `{ id: "cs_ucp_…", status: "ready_for_complete", merchant, line_items, totals: [{ type: "total", amount }] }`
+
+### GET /api/ucp/{merchant_id}/checkout-sessions/{id}
+Read a checkout.
+
+### POST /api/ucp/{merchant_id}/checkout-sessions/{id}/cancel
+Cancel a checkout you no longer need.
+
+### POST /api/wallet/pay
+Pay for a checkout with the Walley wallet. Body:
+```json
+{
+  "merchant_id": "night-owl-coffee",
+  "checkout_id": "cs_ucp_0123456789abcdef0123",
+  "agent_name": "Ava (Claude)",
+  "reason": "User asked for cold brew concentrate for the office"
+}
+```
+200 → paid:
+```json
+{ "status": "completed", "total_cents": 1400, "order": { "id": "ord_…", "payment_intent_id": "pi_…" },
+  "shared_payment_token": "spt_…", "spt_mode": "sandbox_granted", "payment_intent": "pi_…", "ledger_entry_id": "…" }
+```
+402 → declined by the wallet (nothing was charged):
+```json
+{ "status": "declined", "message": "Insufficient wallet balance", "reason": "insufficient_balance",
+  "total_cents": 3000, "available_cents": 400, "shortfall_cents": 2600,
+  "affordable_items": [ { "product_id": "…", "title": "…", "price_cents": 1200 } ], "suggested_topup_dollars": 26 }
+```
+400 → bad `merchant_id` or `checkout_id`. 502 → the merchant could not charge the token (the hold is released).
+
+### Merchant side (what Walley sends)
+`POST /api/ucp/{merchant_id}/checkout-sessions/{id}/complete` with `{ "payment_data": { "token": "spt_…", "provider": "stripe" } }`. The merchant creates a Stripe PaymentIntent with `payment_method_data[shared_payment_granted_token]`. Agents should call `/api/wallet/pay` instead of this endpoint; they never hold a token themselves.
+
+## Guardrails
+
+- Funds are held atomically before any token exists, so an agent cannot spend more than the balance.
+- Per-order limit: $500.
+- Each SPT is capped at the exact order total and expires after 15 minutes.
+- Declined attempts are recorded in the ledger as "Blocked", so the person sees what an agent tried to do.
+
+## Example (curl)
+
+```bash
+B=https://walley-ten.vercel.app
+curl -s "$B/api/wallet" | jq .summary
+curl -s "$B/api/catalog?q=cold%20brew" | jq '.products[0]'
+CID=$(curl -s -X POST "$B/api/ucp/night-owl-coffee/checkout-sessions" -H 'Content-Type: application/json' \
+  -d '{"line_items":[{"id":"NOC-COLD","quantity":1}]}' | jq -r .id)
+curl -s -X POST "$B/api/wallet/pay" -H 'Content-Type: application/json' \
+  -d "{\"merchant_id\":\"night-owl-coffee\",\"checkout_id\":\"$CID\",\"agent_name\":\"curl demo\",\"reason\":\"testing Walley\"}" | jq
+```
+
+## Links
+
+- Dashboard (see the ledger, add money): https://walley-ten.vercel.app
+- Human docs: https://walley-ten.vercel.app/docs
+- Source: https://github.com/dhruvabisht/walley-for-agents

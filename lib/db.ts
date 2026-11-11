@@ -1,5 +1,9 @@
-import { neon, type NeonQueryFunction } from "@neondatabase/serverless";
+import { neon, neonConfig, type NeonQueryFunction } from "@neondatabase/serverless";
 import { config } from "./config";
+
+// Never let a stuck database request hang a payment: every query gets 15 seconds.
+neonConfig.fetchFunction = (url: string, init?: RequestInit) =>
+  fetch(url, { ...init, signal: AbortSignal.timeout(15_000) });
 
 let sqlClient: NeonQueryFunction<false, false> | null = null;
 let schemaReady: Promise<void> | null = null;

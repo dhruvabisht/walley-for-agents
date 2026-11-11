@@ -84,7 +84,10 @@ export async function payForCheckout(opts: {
   checkoutId: string;
   agentRequest: string;
 }) {
-  const res = await fetch(`${opts.ucpBaseUrl}/checkout-sessions/${opts.checkoutId}`, { cache: "no-store" });
+  const res = await fetch(`${opts.ucpBaseUrl}/checkout-sessions/${opts.checkoutId}`, {
+    cache: "no-store",
+    signal: AbortSignal.timeout(20_000),
+  });
   if (!res.ok) throw new Error(`Could not load checkout ${opts.checkoutId} (${res.status})`);
   const checkout = (await res.json()) as UcpCheckout;
   if (checkout.status === "completed") return { already: true, checkout };
@@ -134,6 +137,7 @@ export async function payForCheckout(opts: {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ payment_data: { token: spt.id, provider: "stripe" } }),
       cache: "no-store",
+      signal: AbortSignal.timeout(30_000),
     });
     const completed = await done.json();
     if (!done.ok) throw new Error(completed?.message || `Merchant rejected payment (${done.status})`);

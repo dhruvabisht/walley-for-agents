@@ -120,7 +120,12 @@ export default function Dashboard() {
             <p className="mt-1 hidden text-sm text-muted sm:block">The wallet your AI agent shops with</p>
           </div>
         </div>
-        <span className="rounded-full bg-amber/15 px-3 py-1.5 text-xs font-semibold text-amber">Test mode</span>
+        <div className="flex items-center gap-2">
+          <a href="/docs" className="rounded-full bg-violet/10 px-3 py-1.5 text-xs font-semibold text-violet hover:bg-violet/20">
+            For agents
+          </a>
+          <span className="rounded-full bg-amber/15 px-3 py-1.5 text-xs font-semibold text-amber">Test mode</span>
+        </div>
       </header>
 
       {notice && (

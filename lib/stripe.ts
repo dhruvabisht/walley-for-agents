@@ -40,6 +40,7 @@ export async function stripePreview<T = Record<string, unknown>>(
     },
     body: params ? flatten(params) : undefined,
     cache: "no-store",
+    signal: AbortSignal.timeout(20_000),
   });
   const json = await res.json();
   if (!res.ok) throw new StripeApiError(res.status, json?.error?.code, json?.error?.message || "Stripe error");
