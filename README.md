@@ -29,6 +29,16 @@ The agent never sees a card. Merchants only ever see a single-use, capped, expir
 - **Spending** draws on the wallet's own funding card. In the sandbox that is a Stripe test card; in production it would be a **Stripe Issuing** virtual card funded by the top-ups, so the user's money really backs every SPT.
 - **SPT issuing path.** The wallet first tries the agent-side API `POST /v1/shared_payment/issued_tokens`. That needs a Stripe profile on the account; without one (a fresh sandbox), it falls back to `POST /v1/test_helpers/shared_payment/granted_tokens`, which simulates the token arriving at the seller with the same usage limits. Each ledger entry records which path was used (`spt_mode`).
 
+## Accounts and demo wallets
+
+Every account has its own wallet and ledger.
+
+- **People** sign up at `/signup` and sign in at `/login` (email and password; scrypt hashes, HTTP-only session cookie).
+- **Agents** send an API key on every call: `Authorization: Bearer wk_test_…`. A person creates one key per agent on the dashboard ("Connect an agent") and can revoke it at any time. An agent can also open a wallet itself with `POST /api/agents/signup`, which returns an API key plus a one-time sign-in link for its person.
+- **Demo wallets** are listed on `/login` with one-tap sign-in: Maya (`maya@demo.walley.dev`) and Scout, an agent account (`scout@demo.walley.dev`), both with password `walley-demo`. Agents can try the API with the public key `wk_test_demo_scout_public`. Demo wallets hold test money only and top themselves back up.
+
+Agent guide: [`/llms.txt`](https://walley-ten.vercel.app/llms.txt) and [`/docs`](https://walley-ten.vercel.app/docs).
+
 ## What's in the box
 
 | Path | What it does |
@@ -39,6 +49,8 @@ The agent never sees a card. Merchants only ever see a single-use, capped, expir
 | `lib/ucp-merchant.ts` | Seller side of UCP checkout: create, get, complete (charges the SPT), cancel |
 | `lib/merchants.ts` | Three demo shops: Alpine Supply Co., Night Owl Coffee Roasters, Paperleaf Books |
 | `lib/agent.ts` | Shopping agent with four tools; asks before paying unless you clearly said "buy" |
+| `lib/auth.ts`, `lib/demo.ts`, `proxy.ts` | Accounts, sessions, API keys, one-time sign-in links, demo wallets; `/` redirects to `/login` without a session |
+| `app/login`, `app/signup`, `app/api/auth/*`, `app/api/keys`, `app/api/agents/signup` | Sign-in screens and the account API |
 | `app/.well-known/ucp` | UCP discovery for the demo shops |
 | `app/api/wallet/topup` | Starts Stripe Checkout; `/confirm` verifies and credits |
 | `app/api/webhooks/stripe` | Optional webhook (`checkout.session.completed`) |
